@@ -258,6 +258,12 @@ class MemoryLoginsStorage(private var list: List<ServerPassword>) : AutoCloseabl
         throw UnsupportedOperationException("Only DatabaseLoginsStorage supports getByBaseDomain")
     }
 
+    @Synchronized
+    @Throws(LoginsStorageException::class)
+    override fun potentialDupesIgnoringUsername(login: ServerPassword): List<ServerPassword> {
+        throw UnsupportedOperationException("Only DatabaseLoginsStorage supports potentialDupesIgnoringUsername")
+    }
+
     private fun checkNotClosed() {
         if (state == LoginsStorageState.Closed) {
             throw LoginsStorageException("Using MemoryLoginsStorage after close!")

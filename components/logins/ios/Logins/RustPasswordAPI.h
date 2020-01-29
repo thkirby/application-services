@@ -71,6 +71,10 @@ char *_Nullable sync15_passwords_get_by_base_domain(Sync15PasswordEngineHandle h
                                           char const *_Nonnull baseDomain,
                                           Sync15PasswordsError *_Nonnull error_out);
 
+char *_Nullable sync15_passwords_potential_dupes_ignoring_username(Sync15PasswordEngineHandle handle,
+                                                                   char const *_Nonnull recordJson,
+                                                                   Sync15PasswordsError *_Nonnull error_out);
+
 char *_Nullable sync15_passwords_get_all(Sync15PasswordEngineHandle handle,
                                          Sync15PasswordsError *_Nonnull error_out);
 
