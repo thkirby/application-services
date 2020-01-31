@@ -572,19 +572,6 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
-name = "fenix"
-version = "0.1.0"
-dependencies = [
- "fxaclient_ffi 0.1.0",
- "logins_ffi 0.1.0",
- "places-ffi 0.1.0",
- "push-ffi 0.1.0",
- "rc_log_ffi 0.1.0",
- "sync_manager_ffi 0.1.0",
- "viaduct 0.1.0",
-]
-
-[[package]]
 name = "ffi-support"
 version = "0.4.0"
 dependencies = [
