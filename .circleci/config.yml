@@ -19,9 +19,11 @@ commands:
             # Do not forget to re-export these variables in xc-universal-binary.sh!
             echo 'export "RUSTC_WRAPPER"="sccache"' >> $BASH_ENV
             echo 'export "SCCACHE_IDLE_TIMEOUT"="1200"' >> $BASH_ENV
-            echo 'export "SCCACHE_CACHE_SIZE"="1G"' >> $BASH_ENV
+            echo 'export "SCCACHE_CACHE_SIZE"="2G"' >> $BASH_ENV
             echo 'export "SCCACHE_ERROR_LOG"="/tmp/sccache.log"' >> $BASH_ENV
             echo 'export "RUST_LOG"="sccache=info"' >> $BASH_ENV
+            # Incremental compilation isn't supported by sccache.
+            echo 'export "CARGO_INCREMENTAL"="0"' >> $BASH_ENV
             sccache --version
   install-xcpretty:
     steps:
@@ -130,6 +132,9 @@ commands:
           echo 'export NSS_DIR=$(pwd)/libs/desktop/linux-x86-64/nss' >> $BASH_ENV
           echo 'export SQLCIPHER_LIB_DIR=$(pwd)/libs/desktop/linux-x86-64/sqlcipher/lib' >> $BASH_ENV
           echo 'export SQLCIPHER_INCLUDE_DIR=$(pwd)/libs/desktop/linux-x86-64/sqlcipher/include' >> $BASH_ENV
+      - run:
+          name: Verify the build environment
+          command: ./libs/verify-desktop-environment.sh
   rust-tests:
     parameters:
       rust-version:
@@ -140,9 +145,11 @@ commands:
           rust-version: <<parameters.rust-version>>
       # Test with 1. only default features on, 2. all features on, 3. no features on.
       # This is not perfect (really we want the cartesian product), but is good enough in practice.
+      - run: sccache --zero-stats
       - run:
           name: Test (default features, no features, and all features)
           command: bash automation/all_rust_tests.sh --verbose
+      - run: sccache --show-stats
   dependency-checks:
     steps:
       - run:
@@ -160,8 +167,6 @@ commands:
             python3 ./tools/dependency_summary.py --all-ios-targets --package megazord_ios --check megazords/ios/DEPENDENCIES.md
             python3 ./tools/dependency_summary.py --all-android-targets --package megazord --check megazords/full/DEPENDENCIES.md
             python3 ./tools/dependency_summary.py --all-android-targets --package megazord --format pom --check megazords/full/android/dependency-licenses.xml
-            python3 ./tools/dependency_summary.py --all-android-targets --package fenix --check megazords/fenix/DEPENDENCIES.md
-            python3 ./tools/dependency_summary.py --all-android-targets --package fenix --format pom --check megazords/fenix/android/dependency-licenses.xml
             python3 ./tools/dependency_summary.py --all-android-targets --package lockbox --check megazords/lockbox/DEPENDENCIES.md
             python3 ./tools/dependency_summary.py --all-android-targets --package lockbox --format pom --check megazords/lockbox/android/dependency-licenses.xml
 
@@ -216,7 +221,7 @@ commands:
 jobs:
   Check Swift formatting:
     macos:
-      xcode: "11.3.0"
+      xcode: "11.3.1"
     steps:
       - checkout
       - run: brew install swiftlint swiftformat
@@ -255,30 +260,6 @@ jobs:
       - setup-rust-toolchain
       - checkout
       - dependency-checks
-  Log Rust Changes:
-    docker:
-      - image: python:3.7-buster
-    steps:
-      - setup_remote_docker:
-          version: 18.02.0-ce
-      - run:
-          name: Install Docker client
-          command: |
-            set -x
-            VER="18.06.3-ce"
-            curl -sfSL --retry 5 --retry-delay 10 -o /tmp/docker-$VER.tgz https://download.docker.com/linux/static/stable/x86_64/docker-$VER.tgz
-            tar -xz -C /tmp -f /tmp/docker-$VER.tgz
-            mv /tmp/docker/* /usr/bin
-      - run:
-          name: pull find-package-rugaru image
-          command: |
-            docker pull mozilla/dependencyscan:latest
-      - run:
-          name: log a rust dependency changes
-          command: |
-            printf "{\"org\": \"mozilla-services\", \"repo\": \"application-services\", \"ref\": {\"value\": \"master\", \"kind\": \"branch\"}, \"repo_url\": \"https://github.com/mozilla/application-services.git\"}\n{\"org\": \"mozilla-services\", \"repo\": \"application-services\", \"ref\": {\"value\": \"$CIRCLE_SHA1\", \"kind\": \"commit\"}, \"repo_url\": \"https://github.com/mozilla/application-services.git\"}\n"  | \
-                docker run --rm -i -v /var/run/docker.sock:/var/run/docker.sock --name fpr-cargo_metadata mozilla/dependencyscan:latest python fpr/run_pipeline.py cargo_metadata | \
-                docker run --rm -i -v /var/run/docker.sock:/var/run/docker.sock --name fpr-rust_changelog mozilla/dependencyscan:latest python fpr/run_pipeline.py rust_changelog -m Cargo.toml
   Mirror Bugzilla issues into GitHub:
     docker:
       - image: circleci/python:latest
@@ -310,7 +291,7 @@ jobs:
       - save-sccache-cache
   iOS build and test:
     macos:
-      xcode: "11.3.0"
+      xcode: "11.3.1"
     steps:
       - install-rust
       - setup-rust-toolchain
@@ -336,6 +317,9 @@ jobs:
             # See https://circleci.com/docs/2.0/testing-ios/#pre-starting-the-simulator
             xcrun instruments -w "iPhone 8 (13.0) [" || true
       - run:
+          name: Verify the build environment
+          command: ./libs/verify-ios-environment.sh
+      - run:
           name: Run XCode tests
           command: bash automation/run_ios_tests.sh
       - store_artifacts:
@@ -349,9 +333,9 @@ jobs:
               # XCode tests build in Debug configuration, save us a full
               # Rust rebuild in Release mode by forcing Debug mode on
               # non-release builds.
-              bash build-carthage.sh MozillaAppServices.framework.zip Debug
+              bash build-carthage.sh --out MozillaAppServices.framework.zip --configuration Debug
             else
-              bash build-carthage.sh MozillaAppServices.framework.zip
+              bash build-carthage.sh --out MozillaAppServices.framework.zip
             fi
       - store_artifacts:
           path: raw_xcodebuild.log
@@ -385,7 +369,7 @@ jobs:
             - MozillaAppServices.framework.zip
   Carthage release:
     macos:
-      xcode: "11.3.0"
+      xcode: "11.3.1"
     steps:
       - checkout
       - attach_workspace:
@@ -439,9 +423,6 @@ workflows:
   check-dependencies:
     jobs:
       - Check Rust dependencies
-  log-rust-changelog:
-    jobs:
-      - Log Rust Changes
   bash-lint:
     jobs:
       - Lint Bash scripts

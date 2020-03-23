@@ -99,10 +99,26 @@ open class LoginRecord {
         return dict
     }
 
-    open func toJSON() throws -> String {
-        // We need a String to pass back to rust.
-        let data: Data = try JSONSerialization.data(withJSONObject: toJSONDict())
-        return String(data: data, encoding: String.Encoding.utf8)!
+    internal func toProtobuf() -> MsgTypes_PasswordInfo {
+        var buf = MsgTypes_PasswordInfo()
+        buf.id = id
+        buf.hostname = hostname
+        buf.password = password
+        buf.username = username
+        buf.timesUsed = Int64(timesUsed)
+        buf.timeCreated = timeCreated
+        buf.timeLastUsed = timeLastUsed
+        buf.timePasswordChanged = timePasswordChanged
+        buf.usernameField = usernameField
+        buf.passwordField = passwordField
+        if let h = httpRealm {
+            buf.httpRealm = h
+        }
+        if let f = formSubmitURL {
+            buf.formSubmitURL = f
+        }
+
+        return buf
     }
 
     // TODO: handle errors in these... (they shouldn't ever happen
@@ -169,5 +185,28 @@ open class LoginRecord {
             }
         }
         return [LoginRecord]()
+    }
+}
+
+internal func unpackProtobufInfo(msg: MsgTypes_PasswordInfo) -> LoginRecord {
+    return LoginRecord(
+        id: msg.id,
+        password: msg.password,
+        hostname: msg.hostname,
+        username: msg.username,
+        formSubmitURL: msg.hasFormSubmitURL ? msg.formSubmitURL : nil,
+        httpRealm: msg.hasHTTPRealm ? msg.httpRealm : nil,
+        timesUsed: Int(msg.timesUsed),
+        timeLastUsed: msg.timeLastUsed,
+        timeCreated: msg.timeCreated,
+        timePasswordChanged: msg.timePasswordChanged,
+        usernameField: msg.usernameField,
+        passwordField: msg.passwordField
+    )
+}
+
+internal func unpackProtobufInfoList(msgList: MsgTypes_PasswordInfos) -> [LoginRecord] {
+    return msgList.infos.map { info in
+        unpackProtobufInfo(msg: info)
     }
 }

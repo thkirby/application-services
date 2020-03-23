@@ -227,6 +227,7 @@
 //!                       fixed up if it was safe to do so, or an error if the login is irreparably invalid.
 
 use crate::error::*;
+use crate::msg_types::PasswordInfo;
 use crate::util;
 use rusqlite::Row;
 use serde_derive::*;
@@ -540,6 +541,44 @@ impl Login {
         // For now, we want to apply fixups but still return the record if
         // there is unfixably invalid data in the db.
         Ok(login.maybe_fixup().unwrap_or(None).unwrap_or(login))
+    }
+}
+
+impl From<Login> for PasswordInfo {
+    fn from(login: Login) -> Self {
+        Self {
+            id: login.guid.into_string(),
+            hostname: login.hostname,
+            password: login.password,
+            username: login.username,
+            http_realm: login.http_realm,
+            form_submit_url: login.form_submit_url,
+            username_field: login.username_field,
+            password_field: login.password_field,
+            times_used: login.times_used,
+            time_created: login.time_created,
+            time_last_used: login.time_last_used,
+            time_password_changed: login.time_password_changed,
+        }
+    }
+}
+
+impl From<PasswordInfo> for Login {
+    fn from(info: PasswordInfo) -> Self {
+        Self {
+            guid: Guid::from_string(info.id),
+            hostname: info.hostname,
+            password: info.password,
+            username: info.username,
+            http_realm: info.http_realm,
+            form_submit_url: info.form_submit_url,
+            username_field: info.username_field,
+            password_field: info.password_field,
+            times_used: info.times_used,
+            time_created: info.time_created,
+            time_last_used: info.time_last_used,
+            time_password_changed: info.time_password_changed,
+        }
     }
 }
 

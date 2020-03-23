@@ -76,13 +76,7 @@ impl From<AccessTokenInfo> for msg_types::AccessTokenInfo {
 
 impl From<IntrospectInfo> for msg_types::IntrospectInfo {
     fn from(a: IntrospectInfo) -> Self {
-        msg_types::IntrospectInfo {
-            active: a.active,
-            token_type: a.token_type,
-            scope: a.scope,
-            exp: a.exp,
-            iss: a.iss,
-        }
+        msg_types::IntrospectInfo { active: a.active }
     }
 }
 
@@ -199,10 +193,16 @@ impl From<AccountEvent> for msg_types::AccountEvent {
                     device_name,
                 )),
             },
-            AccountEvent::DeviceDisconnected { is_local_device } => Self {
+            AccountEvent::DeviceDisconnected {
+                device_id,
+                is_local_device,
+            } => Self {
                 r#type: msg_types::account_event::AccountEventType::DeviceDisconnected as i32,
-                data: Some(msg_types::account_event::Data::DeviceDisconnectedIsLocal(
-                    is_local_device,
+                data: Some(msg_types::account_event::Data::DeviceDisconnectedData(
+                    msg_types::account_event::DeviceDisconnectedData {
+                        device_id,
+                        is_local_device,
+                    },
                 )),
             },
         }

@@ -17,7 +17,7 @@ open class RustFxAccount {
     /// OAuth Flow.
     public required convenience init(config: FxAConfig) throws {
         let pointer = try rustCall { err in
-            fxa_new(config.contentUrl, config.clientId, config.redirectUri, err)
+            fxa_new(config.contentUrl, config.clientId, config.redirectUri, config.tokenServerUrlOverride, err)
         }
         self.init(raw: pointer)
     }
@@ -64,6 +64,13 @@ open class RustFxAccount {
     open func getTokenServerEndpointURL() throws -> URL {
         let ptr = try rustCall { err in
             fxa_get_token_server_endpoint_url(self.raw, err)
+        }
+        return URL(string: String(freeingFxaString: ptr))!
+    }
+
+    open func getPairingAuthorityURL() throws -> URL {
+        let ptr = try rustCall { err in
+            fxa_get_pairing_authority_url(self.raw, err)
         }
         return URL(string: String(freeingFxaString: ptr))!
     }
@@ -134,6 +141,14 @@ open class RustFxAccount {
         defer { fxa_bytebuffer_free(ptr) }
         let msg = try! MsgTypes_AccessTokenInfo(serializedData: Data(rustBuffer: ptr))
         return AccessTokenInfo(msg: msg)
+    }
+
+    /// Get the session token. If non-present an error will be thrown.
+    open func getSessionToken() throws -> String {
+        let ptr = try rustCall { err in
+            fxa_get_session_token(self.raw, err)
+        }
+        return String(freeingFxaString: ptr)
     }
 
     /// Check whether the refreshToken is active
@@ -244,6 +259,37 @@ open class RustFxAccount {
         }
     }
 
+    open func migrateFromSessionToken(sessionToken: String, kSync: String, kXCS: String) throws -> Bool {
+        let json = try nullableRustCall { err in
+            fxa_migrate_from_session_token(self.raw, sessionToken, kSync, kXCS, 0 /* reuse session token */, err)
+        }
+        // We don't parse the JSON coz nobody uses it...
+        return json != nil
+    }
+
+    open func retryMigrateFromSessionToken() throws -> Bool {
+        let json = try nullableRustCall { err in
+            fxa_retry_migrate_from_session_token(self.raw, err)
+        }
+        return json != nil
+    }
+
+    open func isInMigrationState() throws -> Bool {
+        let number = try rustCall { err in
+            fxa_is_in_migration_state(self.raw, err)
+        }
+        let state = MigrationState.fromNumber(number)
+        // We never initiate a "copy-session-token" migration,
+        // so we can just return a boolean.
+        return state == .reuseSessionToken
+    }
+
+    open func handleSessionTokenChange(sessionToken: String) throws {
+        try rustCall { err in
+            fxa_handle_session_token_change(self.raw, sessionToken, err)
+        }
+    }
+
     private func msgToBuffer(msg: SwiftProtobuf.Message) -> (Data, Int32) {
         let data = try! msg.serializedData()
         let size = Int32(data.count)
@@ -256,6 +302,14 @@ private let fxaRustQueue = DispatchQueue(label: "com.mozilla.fxa-rust")
 
 internal func rustCall<T>(_ cb: (UnsafeMutablePointer<FxAError>) throws -> T?) throws -> T {
     return try FirefoxAccountError.unwrap { err in
+        try fxaRustQueue.sync {
+            try cb(err)
+        }
+    }
+}
+
+internal func nullableRustCall<T>(_ cb: (UnsafeMutablePointer<FxAError>) throws -> T?) throws -> T? {
+    return try FirefoxAccountError.tryUnwrap { err in
         try fxaRustQueue.sync {
             try cb(err)
         }

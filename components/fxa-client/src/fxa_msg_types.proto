@@ -24,10 +24,6 @@ message AccessTokenInfo {
 
 message IntrospectInfo {
     required bool active = 1;
-    required string token_type = 2;
-    optional string scope = 3;
-    optional uint64 exp = 4;
-    optional string iss = 5;
 }
 
 message ScopedKey {
@@ -104,15 +100,20 @@ message AccountEvent {
         PROFILE_UPDATED = 2;
         DEVICE_CONNECTED = 3; // `data` set to `device_connected_name`.
         ACCOUNT_AUTH_STATE_CHANGED = 4;
-        DEVICE_DISCONNECTED = 5; // `data` set to `device_disconnected_is_local`.
+        DEVICE_DISCONNECTED = 5; // `data` set to `device_disconnected_data`.
         ACCOUNT_DESTROYED = 6;
     }
     required AccountEventType type = 1;
 
+    message DeviceDisconnectedData {
+        required string device_id = 1;
+        required bool is_local_device = 2;
+    }
+
     oneof data {
         IncomingDeviceCommand device_command = 2;
         string device_connected_name = 3;
-        bool device_disconnected_is_local = 4;
+        DeviceDisconnectedData device_disconnected_data = 4;
     }
 }
 

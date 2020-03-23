@@ -1,3 +1,266 @@
+# v0.55.0 (_2020-03-16_)
+
+[Full Changelog](https://github.com/mozilla/application-services/compare/v0.54.1...v0.55.0)
+
+## Places
+
+### ⚠️ Breaking changes ⚠️
+
+- Android: `PlacesConnection.deletePlace` has been renamed to
+  `deleteVisitsFor`, to clarify that it might not actually delete the
+  page if it's bookmarked, or has a keyword or tags
+  ([#2695](https://github.com/mozilla/application-services/pull/2695)).
+
+### What's fixed
+
+- `history::delete_visits_for` (formerly `delete_place_by_guid`) now correctly
+  deletes all visits from a page if it has foreign key references, like
+  bookmarks, keywords, or tags. Previously, this would cause a constraint
+  violation ([#2695](https://github.com/mozilla/application-services/pull/2695)).
+
+## FxA Client
+
+### What's new
+
+- Added `getPairingAuthorityURL` method returning the URL the user should navigate to on their Desktop computer to perform a pairing flow. ([#2815](https://github.com/mozilla/application-services/pull/2815))
+
+### Breaking changes
+
+- In order to account better for self-hosted FxA/Sync backends, the FxAConfig objects have been reworked. ([#2801](https://github.com/mozilla/application-services/pull/2801))
+  - iOS: `FxAConfig.release(contentURL, clientID)` is now `FxAConfig(server: .release, contentURL, clientID)`.
+  - Android: `Config.release(contentURL, clientID)` is now `Config(Server.RELEASE, contentURL, clientID)`.
+  - These constructors also take a new `tokenServerUrlOverride` optional 4th parameter that overrides the token server URL.
+
+- iOS: `FxAccountManager`'s `getManageAccountURL` and `getTokenServerEndpointURL` methods now run on background thread and return their results in a callback function. ([#2813](https://github.com/mozilla/application-services/pull/2813))
+
+# v0.54.1 (_2020-03-12_)
+
+[Full Changelog](https://github.com/mozilla/application-services/compare/v0.54.0...v0.54.1)
+
+## Sync
+
+### What's fixed
+
+- Engine disabled/enabled state changes now work again after a regression in
+  0.53.0.
+
+## Android
+
+### What's changed
+
+- There is now preliminary support for an "autoPublish" local-development workflow similar
+  to the one used when working with Fenix and android-components; see
+  [this howto guide](./docs/howtos/locally-published-components-in-fenix.md) for details.
+
+## Places
+
+### What's fixed
+
+- Improve handling of bookmark search keywords. Keywords are now imported
+  correctly from Fennec, and signing out of Sync in Firefox for iOS no longer
+  loses keywords ([#2501](https://github.com/mozilla/application-services/pull/2501)).
+
+# v0.54.0 (_2020-03-10_)
+
+[Full Changelog](https://github.com/mozilla/application-services/compare/v0.53.2...v0.54.0)
+
+## General
+
+### What's changed
+
+- iOS: Xcode version changed to 11.3.1 from 11.3.0.
+
+## Rust
+
+### What's New
+
+- Sourcing `libs/bootstrap-desktop.sh` is not a thing anymore. Please run `./libs/verify-desktop-environment.sh` at least once instead. ([#2769](https://github.com/mozilla/application-services/pull/2769))
+
+## Push
+
+### Breaking changes
+
+- Android: The `PushManager.verifyConnection` now returns a `List<PushSubscriptionChanged>` that contain the channel ID and scope of the subscriptions that have expired. ([#2632](https://github.com/mozilla/application-services/pull/2632))
+  See [`onpushsubscriptionchange`][0] events on how this change can be propagated to notify web content.
+
+[0]: https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerGlobalScope/onpushsubscriptionchange
+
+## Places
+
+### What's fixed
+
+- Improve handling of tags for bookmarks with the same URL. These bookmarks no
+  longer cause syncs to fail ([#2750](https://github.com/mozilla/application-services/pull/2750)),
+  and bookmarks with duplicate or mismatched tags are reuploaded
+  ([#2774](https://github.com/mozilla/application-services/pull/2774)).
+
+### Breaking changes
+
+- Synced items with unknown types now fail the sync, instead of being silently
+  ignored. We'll monitor this error in telemetry, and add logic to delete these
+  items on the server if needed
+  ([#2780](https://github.com/mozilla/application-services/pull/2780)).
+
+# v0.53.2 (_2020-03-05_)
+
+[Full Changelog](https://github.com/mozilla/application-services/compare/v0.53.1...v0.53.2)
+
+## FxA Client
+
+### What's fixed
+
+- iOS: `FxAccountManager.logout` will now properly clear the persisted account state. ([#2755](https://github.com/mozilla/application-services/issues/2755))
+- iOS: `FxAccountManager.getAccessToken` now runs in a background thread. ([#2755](https://github.com/mozilla/application-services/issues/2755))
+
+# v0.53.1 (_2020-03-05_)
+
+[Full Changelog](https://github.com/mozilla/application-services/compare/v0.53.0...v0.53.1)
+
+## Android
+
+### What's changed
+
+- A megazord loading failure will throw as soon as possible rather than at call time.
+  ([#2739](https://github.com/mozilla/application-services/issues/2739))
+
+## iOS
+
+### What's New
+
+- Developers can now run `./libs/verify-ios-environment.sh` to ensure their machine is ready to build the iOS Xcode project smoothly. ([#2737](https://github.com/mozilla/application-services/pull/2737))
+
+## FxA Client
+
+### What's new
+
+- Added `FxAConfig.china` helper function to use FxA/Sync chinese servers. ([#2736](https://github.com/mozilla/application-services/issues/2736))
+- iOS: Added `FxAccountManager.handlePasswordChanged` method that should be called after... a password change! ([#2744](https://github.com/mozilla/application-services/issues/2744))
+
+# v0.53.0 (_2020-02-27_)
+
+[Full Changelog](https://github.com/mozilla/application-services/compare/v0.52.0...v0.53.0)
+
+## Megazords
+
+### What's changed
+
+- The fenix megazord is no more! ([#2565](https://github.com/mozilla/application-services/pull/2565))
+
+  The full megazord should be used instead. The two are functionally identical,
+  however this should reduce the configuration surface required to use the
+  application-services code.
+
+  An example PR showing the changes typically required for this is available
+  here: https://github.com/MozillaReality/FirefoxReality/pull/2867. Please feel
+  free to reach out if you have any issues.
+
+## Sync
+
+### What's fixed
+
+- Rust sync code is now more robust in the face of corrupt meta/global
+  records. ([#2688](https://github.com/mozilla/application-services/pull/2688))
+
+- In v0.52.0 we reported some network related fixes. We lied. This time
+  we promise they are actually fixed. ([#2616](https://github.com/mozilla/application-services/issues/2616),
+  [#2617](https://github.com/mozilla/application-services/issues/2617)
+  [#2623](https://github.com/mozilla/application-services/issues/2623))
+
+### What's changed
+
+- Fewer updates to the 'clients' collection will be made. ([#2624](https://github.com/mozilla/application-services/issues/2624))
+
+## FxA Client
+
+### What's changed
+
+- The `ensureCapabilities` method will not perform any network requests if the
+  given capabilities are already registered with the server.
+  ([#2681](https://github.com/mozilla/application-services/pull/2681))
+
+### What's fixed
+
+- Ensure an offline migration recovery succeeding does not happen multiple times.
+  ([#2706](https://github.com/mozilla/application-services/pull/2706))
+
+## Places
+
+### What's fixed
+
+- `storage::history::apply_observation` and `storage::bookmarks::update_bookmark`
+  now flush pending origin and frecency updates. This fixes a bug where origins
+  might be flushed at surprising times, like right after clearing history.
+  ([#2693](https://github.com/mozilla/application-services/issues/2693))
+
+## Push
+
+### What's fixed
+
+- `PushManager.dispatchInfoForChid` does not throw `KotlinNullPointerException` anymore if the method returned nothing. ([#2703](https://github.com/mozilla/application-services/issues/2703))
+
+
+# v0.52.0 (_2020-02-19_)
+
+[Full Changelog](https://github.com/mozilla/application-services/compare/v0.51.1...v0.52.0)
+
+## Sync
+
+### What's changed
+
+- Better caching of the tokenserver token and info/configuration response. ([#2616](https://github.com/mozilla/application-services/issues/2616))
+
+- Less network requests will be made in the case nothing has changed on the server. ([#2623](https://github.com/mozilla/application-services/issues/2623))
+
+## Places
+
+### What's changed
+
+- Added a new field `reasons` which is a `List` of `SearchResultReason`s in `SearchResult`. ([#2564](https://github.com/mozilla/application-services/pull/2564))
+
+- Some places import related issues fixed ([#2536](https://github.com/mozilla/application-services/issues/2536),
+  [#2607](https://github.com/mozilla/application-services/issues/2607))
+
+### Breaking changes
+
+- Android: The `PlacesWriterConnection.resetHistorySyncMetadata` and `PlacesWriterConnection.resetBookmarkSyncMetadata` methods have been moved to the `PlacesApi` class. ([#2668](https://github.com/mozilla/application-services/pull/2668))
+- iOS: The `PlacesWriteConnection.resetHistorySyncMetadata` method has been moved to the `PlacesAPI` class. ([#2668](https://github.com/mozilla/application-services/pull/2668))
+
+## FxA Client
+
+### What's New
+
+- Android: `FirefoxAccount.handlePushMessage` now handles all possible FxA push payloads and will return new `AccountEvent`s ([#2522](https://github.com/mozilla/application-services/pull/2522)):
+  - `.ProfileUpdated` which should be handled by fetching the newest profile.
+  - `.AccountAuthStateChanged` should be handled by checking if the authentication state is still valid.
+  - `.AccountDestroyed` should be handled by removing the account information (no need to call `FirefoxAccount.disconnect`) from the device.
+  - `.DeviceConnected` can be handled by showing a "<Device name> is connected to this account" notification.
+  - `.DeviceDisconnected` should be handled by showing a "re-auth" state to the user if `isLocalDevice` is true. There is no need to call `FirefoxAccount.disconnect` as it will fail.
+
+- iOS: Added `FxAccountManager.getSessionToken`. Note that you should request the `.session` scope in the constructor for this to work properly. ([#2638](https://github.com/mozilla/application-services/pull/2638))
+- iOS: Added `FxAccountManager.getManageAccountURL`. ([#2658](https://github.com/mozilla/application-services/pull/2658))
+- iOS: Added `FxAccountManager.getTokenServerEndpointURL`. ([#2658](https://github.com/mozilla/application-services/pull/2658))
+- iOS: Added migration methods to `FxAccountManager` ([#2637](https://github.com/mozilla/application-services/pull/2637)):
+  - `authenticateViaMigration` will try to authenticate an account without any user interaction using previously stored account information.
+  - `accountMigrationInFlight` and `retryMigration` should be used in conjunction to handle cases where the migration could not be completed but is still recoverable.
+- Added a `deviceId` property to the `AccountEvent.deviceDisconnected` enum case. ([#2645](https://github.com/mozilla/application-services/pull/2645))
+- Added `context=oauth_webchannel_v1` in `getManageDevicesURL` methods for WebChannel redirect URLs. ([#2658](https://github.com/mozilla/application-services/pull/2658))
+
+### Breaking changes
+
+- Android: A few changes were made in order to decouple device commands from "account events" ([#2522](https://github.com/mozilla/application-services/pull/2522)):
+  - The `AccountEvent` enum has been refactored: `.TabReceived` has been replaced by `.IncomingDeviceCommand(IncomingDeviceCommand)`, `IncomingDeviceCommand` itself is another enum that contains `TabReceived`.
+  - `FirefoxAccount.pollDeviceCommands` now returns an array of `IncomingDeviceCommand`.
+
+- iOS: The `FxaAccountManager` class has been renamed to `FxAccountManager`. ([#2637](https://github.com/mozilla/application-services/pull/2637))
+- iOS: The `FxAccountManager` default applications scopes do not include `.oldSync` anymore. ([#2638](https://github.com/mozilla/application-services/pull/2638))
+- iOS: `FxaAccountManager.getTokenServerEndpointURL` now returns the full token server URL such as `https://token.services.mozilla.com/1.0/sync/1.5`. ([#2676](https://github.com/mozilla/application-services/pull/2676))
+
+## Push
+
+### What's New
+
+- Android: Exposed `GeneralError` to the Kotlin layer.
+
 # v0.51.1 (_2020-02-07_)
 
 [Full Changelog](https://github.com/mozilla/application-services/compare/v0.51.0...v0.51.1)

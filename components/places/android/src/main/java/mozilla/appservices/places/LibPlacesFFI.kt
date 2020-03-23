@@ -113,7 +113,7 @@ internal interface LibPlacesFFI : Library {
         out_err: RustError.ByReference
     )
 
-    fun places_delete_place(
+    fun places_delete_visits_for(
         handle: PlacesConnectionHandle,
         url: String,
         out_err: RustError.ByReference
@@ -185,7 +185,7 @@ internal interface LibPlacesFFI : Library {
     ): Long
 
     fun places_reset(
-        handle: PlacesConnectionHandle,
+        handle: PlacesApiHandle,
         error: RustError.ByReference
     )
 
@@ -275,7 +275,7 @@ internal interface LibPlacesFFI : Library {
     )
 
     fun bookmarks_reset(
-        handle: PlacesConnectionHandle,
+        handle: PlacesApiHandle,
         error: RustError.ByReference
     )
 

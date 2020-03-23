@@ -7,9 +7,7 @@ package mozilla.appservices.push
 import com.sun.jna.Pointer
 import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONArray
-import com.google.protobuf.CodedInputStream
-
-import mozilla.appservices.support.native.RustBuffer
+import java.util.Locale
 
 /**
  * An implementation of a [PushAPI] backed by a Rust Push library.
@@ -64,12 +62,16 @@ class PushManager(
         scope: String,
         appServerKey: String?
     ): SubscriptionResponse {
-        val respBuffer = rustCallForBuffer { error ->
+        val respBuffer = rustCall { error ->
             LibPushFFI.INSTANCE.push_subscribe(
                 this.handle.get(), channelID, scope, appServerKey, error)
         }
-        val response = MsgTypes.SubscriptionResponse.parseFrom(respBuffer)
-        return SubscriptionResponse.fromMessage(response)
+        try {
+            val response = MsgTypes.SubscriptionResponse.parseFrom(respBuffer.asCodedInputStream()!!)
+            return SubscriptionResponse.fromMessage(response)
+        } finally {
+            LibPushFFI.INSTANCE.push_destroy_buffer(respBuffer)
+        }
     }
 
     override fun unsubscribe(channelID: String): Boolean {
@@ -96,11 +98,18 @@ class PushManager(
         }.toInt() == 1
     }
 
-    override fun verifyConnection(): Boolean {
-        return rustCall { error ->
+    override fun verifyConnection(): List<PushSubscriptionChanged> {
+        val respBuffer = rustCall { error ->
             LibPushFFI.INSTANCE.push_verify_connection(
                 this.handle.get(), error)
-        }.toInt() == 1
+        }
+
+        try {
+            val response = MsgTypes.PushSubscriptionsChanged.parseFrom(respBuffer.asCodedInputStream()!!)
+            return PushSubscriptionChanged.fromCollectionMessage(response)
+        } finally {
+            LibPushFFI.INSTANCE.push_destroy_buffer(respBuffer)
+        }
     }
 
     override fun decrypt(
@@ -125,12 +134,17 @@ class PushManager(
     }
 
     override fun dispatchInfoForChid(channelID: String): DispatchInfo? {
-        val infoBuffer = rustCallForOptBuffer { error ->
+        val infoBuffer = rustCall { error ->
             LibPushFFI.INSTANCE.push_dispatch_info_for_chid(
                 this.handle.get(), channelID, error)
         }
-        val info = MsgTypes.DispatchInfo.parseFrom(infoBuffer)
-        return DispatchInfo.fromMessage(info)
+        try {
+            return infoBuffer.asCodedInputStream()?.let { stream ->
+                DispatchInfo.fromMessage(MsgTypes.DispatchInfo.parseFrom(stream))
+            }
+        } finally {
+            LibPushFFI.INSTANCE.push_destroy_buffer(infoBuffer)
+        }
     }
 
     private inline fun <U> rustCall(callback: (RustError.ByReference) -> U): U {
@@ -147,45 +161,13 @@ class PushManager(
 
     @Suppress("TooGenericExceptionThrown")
     private inline fun rustCallForString(callback: (RustError.ByReference) -> Pointer?): String {
-        val cstring = rustCall(callback)
+        val cString = rustCall(callback)
                 ?: throw RuntimeException("Bug: Don't use this function when you can return" +
                         " null on success.")
         try {
-            return cstring.getString(0, "utf8")
+            return cString.getString(0, "utf8")
         } finally {
-            LibPushFFI.INSTANCE.push_destroy_string(cstring)
-        }
-    }
-
-    private inline fun rustCallForOptString(callback: (RustError.ByReference) -> Pointer?): String? {
-        val cstring = rustCall(callback)
-        try {
-            return cstring?.getString(0, "utf8")
-        } finally {
-            cstring?.let { LibPushFFI.INSTANCE.push_destroy_string(cstring) }
-        }
-    }
-
-    @Suppress("TooGenericExceptionThrown")
-    private inline fun rustCallForBuffer(callback: (RustError.ByReference) -> RustBuffer.ByValue?):
-            CodedInputStream {
-        val cbuff = rustCall(callback)
-                ?: throw RuntimeException("Bug: Don't use this function when you can return" +
-                "null on success.")
-        try {
-            return cbuff.asCodedInputStream()!!
-        } finally {
-            LibPushFFI.INSTANCE.push_destroy_buffer(cbuff)
-        }
-    }
-
-    private inline fun rustCallForOptBuffer(callback: (RustError.ByReference) -> RustBuffer.ByValue?):
-            CodedInputStream? {
-        val cbuff = rustCall(callback)
-        try {
-            return cbuff?.let { cbuff.asCodedInputStream()!! }
-        } finally {
-            cbuff?.let { LibPushFFI.INSTANCE.push_destroy_buffer(cbuff) }
+            LibPushFFI.INSTANCE.push_destroy_string(cString)
         }
     }
 }
@@ -199,10 +181,11 @@ class PushManager(
  * Please contact services back-end for any additional bridge protocols.
  */
 
+@Suppress("Unused")
 enum class BridgeType {
     FCM, ADM, APNS, TEST;
 
-    override fun toString() = name.toLowerCase()
+    override fun toString() = name.toLowerCase(Locale.US)
 }
 
 /**
@@ -266,8 +249,28 @@ class DispatchInfo constructor (
                 uaid = msg.uaid,
                 scope = msg.scope,
                 endpoint = msg.endpoint,
-                appServerKey = msg.appServerKey
+                appServerKey = if (msg.hasAppServerKey()) msg.appServerKey else null
             )
+        }
+    }
+}
+
+class PushSubscriptionChanged constructor (
+    val channelID: String,
+    val scope: String
+) {
+    companion object {
+        internal fun fromMessage(msg: MsgTypes.PushSubscriptionChanged): PushSubscriptionChanged {
+            return PushSubscriptionChanged(
+                channelID = msg.channelID,
+                scope = msg.scope
+            )
+        }
+
+        internal fun fromCollectionMessage(msg: MsgTypes.PushSubscriptionsChanged): List<PushSubscriptionChanged> {
+            return msg.subsList.map {
+                fromMessage(it)
+            }
         }
     }
 }
@@ -331,7 +334,7 @@ class DispatchInfo constructor (
 
 ```
  */
-interface PushAPI : java.lang.AutoCloseable {
+interface PushAPI : AutoCloseable {
     /**
      * Get the Subscription Info block
      *
@@ -377,7 +380,7 @@ interface PushAPI : java.lang.AutoCloseable {
      * @return bool indicating if connection state is valid (true) or if channels should get a
      * `pushsubscriptionchange` event (false).
      */
-    fun verifyConnection(): Boolean
+    fun verifyConnection(): List<PushSubscriptionChanged>
 
     /**
      * Decrypts a raw push message.

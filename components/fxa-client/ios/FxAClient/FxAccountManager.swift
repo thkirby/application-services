@@ -9,13 +9,14 @@ public extension Notification.Name {
     static let accountAuthProblems = Notification.Name("accountAuthProblems")
     static let accountAuthenticated = Notification.Name("accountAuthenticated")
     static let accountProfileUpdate = Notification.Name("accountProfileUpdate")
+    static let accountMigrationFailed = Notification.Name("accountMigrationFailed")
 }
 
 // swiftlint:disable type_body_length
-open class FxaAccountManager {
+open class FxAccountManager {
     let accountStorage: KeyChainAccountStorage
     let config: FxAConfig
-    let deviceConfig: DeviceConfig
+    var deviceConfig: DeviceConfig
     let applicationScopes: [String]
 
     var acct: FxAccount?
@@ -41,14 +42,14 @@ open class FxaAccountManager {
     public required init(
         config: FxAConfig,
         deviceConfig: DeviceConfig,
-        applicationScopes: [String] = [OAuthScope.profile, OAuthScope.oldSync],
+        applicationScopes: [String] = [OAuthScope.profile],
         keychainAccessGroup: String? = nil
     ) {
         self.config = config
         self.deviceConfig = deviceConfig
         self.applicationScopes = applicationScopes
         accountStorage = KeyChainAccountStorage(keychainAccessGroup: keychainAccessGroup)
-        setupAuthExceptionsListener()
+        setupInternalListeners()
     }
 
     private lazy var statePersistenceCallback: FxAStatePersistenceCallback = {
@@ -69,13 +70,20 @@ open class FxaAccountManager {
     public func hasAccount() -> Bool {
         return state == .authenticatedWithProfile ||
             state == .authenticatedNoProfile ||
-            state == .authenticationProblem
+            state == .authenticationProblem ||
+            state == .canAutoretryMigration
     }
 
     /// Returns true if the account needs re-authentication.
     /// Your app should present the option to start a new OAuth flow.
     public func accountNeedsReauth() -> Bool {
         return state == .authenticationProblem
+    }
+
+    /// Returns true if there is a migration in-flight.
+    /// The caller should then call `retryMigration`.
+    public func accountMigrationInFlight() -> Bool {
+        return state == .canAutoretryMigration
     }
 
     /// Begins a new authentication flow.
@@ -131,6 +139,38 @@ open class FxaAccountManager {
         }
     }
 
+    /// Use the provided user account information to sign-in without any user interaction.
+    public func authenticateViaMigration(
+        sessionToken: String,
+        kSync: String,
+        kXCS: String,
+        completionHandler: @escaping (MigrationResult) -> Void
+    ) {
+        processEvent(event: .authenticateViaMigration(sessionToken: sessionToken, kSync: kSync, kXCS: kXCS)) {
+            if self.accountMigrationInFlight() {
+                completionHandler(.willRetry)
+            } else if self.hasAccount() {
+                completionHandler(.success)
+            } else {
+                completionHandler(.failure)
+            }
+        }
+    }
+
+    /// If `accountMigrationInFlight` returns true, this function should be called
+    /// on a regular basic by the caller.
+    public func retryMigration(completionHandler: @escaping (MigrationResult) -> Void) {
+        processEvent(event: .retryMigration) {
+            if self.accountMigrationInFlight() {
+                completionHandler(.willRetry)
+            } else if self.hasAccount() {
+                completionHandler(.success)
+            } else {
+                completionHandler(.failure)
+            }
+        }
+    }
+
     /// Finish an authentication flow.
     ///
     /// If it succeeds, a `.accountAuthenticated` notification will get fired.
@@ -151,11 +191,75 @@ open class FxaAccountManager {
 
     /// Try to get an OAuth access token.
     public func getAccessToken(scope: String, completionHandler: @escaping (Result<AccessTokenInfo, Error>) -> Void) {
+        DispatchQueue.global().async {
+            do {
+                let tokenInfo = try self.requireAccount().getAccessToken(scope: scope)
+                DispatchQueue.main.async { completionHandler(.success(tokenInfo)) }
+            } catch {
+                DispatchQueue.main.async { completionHandler(.failure(error)) }
+            }
+        }
+    }
+
+    /// Get the session token associated with this account.
+    /// Note that you should have requested the `.session` scope earlier to be able to get this token.
+    public func getSessionToken() -> Result<String, Error> {
         do {
-            let tokenInfo = try requireAccount().getAccessToken(scope: scope)
-            DispatchQueue.main.async { completionHandler(.success(tokenInfo)) }
+            return .success(try requireAccount().getSessionToken())
         } catch {
-            DispatchQueue.main.async { completionHandler(.failure(error)) }
+            return .failure(error)
+        }
+    }
+
+    /// The account password has been changed locally and a new session token has been sent to us through WebChannel.
+    public func handlePasswordChanged(newSessionToken: String, completionHandler: @escaping () -> Void) {
+        processEvent(event: .changedPassword(newSessionToken: newSessionToken)) {
+            DispatchQueue.main.async { completionHandler() }
+        }
+    }
+
+    /// Get the account management URL.
+    public func getManageAccountURL(
+        entrypoint: String,
+        completionHandler: @escaping (Result<URL, Error>) -> Void
+    ) {
+        DispatchQueue.global().async {
+            do {
+                let url = try self.requireAccount().getManageAccountURL(entrypoint: entrypoint)
+                DispatchQueue.main.async { completionHandler(.success(url)) }
+            } catch {
+                DispatchQueue.main.async { completionHandler(.failure(error)) }
+            }
+        }
+    }
+
+    /// Get the pairing URL to navigate to on the Auth side (typically a computer).
+    public func getPairingAuthorityURL(
+        completionHandler: @escaping (Result<URL, Error>) -> Void
+    ) {
+        DispatchQueue.global().async {
+            do {
+                let url = try self.requireAccount().getPairingAuthorityURL()
+                DispatchQueue.main.async { completionHandler(.success(url)) }
+            } catch {
+                DispatchQueue.main.async { completionHandler(.failure(error)) }
+            }
+        }
+    }
+
+    /// Get the token server URL with `1.0/sync/1.5` appended at the end.
+    public func getTokenServerEndpointURL(
+        completionHandler: @escaping (Result<URL, Error>) -> Void
+    ) {
+        DispatchQueue.global().async {
+            do {
+                let url = try self.requireAccount()
+                    .getTokenServerEndpointURL()
+                    .appendingPathComponent("1.0/sync/1.5")
+                DispatchQueue.main.async { completionHandler(.success(url)) }
+            } catch {
+                DispatchQueue.main.async { completionHandler(.failure(error)) }
+            }
         }
     }
 
@@ -195,61 +299,22 @@ open class FxaAccountManager {
     internal func processEvent(event: Event, completionHandler: @escaping () -> Void) {
         fxaFsmQueue.async {
             var toProcess: Event? = event
-            while let e = toProcess {
-                guard let nextState = FxaAccountManager.nextState(state: self.state, event: e) else {
-                    FxALog.error("Got invalid event \(e) for state \(self.state).")
+            while let evt = toProcess {
+                toProcess = nil // Avoid infinite loop if `toProcess` doesn't get replaced.
+                guard let nextState = FxAccountManager.nextState(state: self.state, event: evt) else {
+                    FxALog.error("Got invalid event \(evt) for state \(self.state).")
                     continue
                 }
-                FxALog.debug("Processing event \(e) for state \(self.state). Next state is \(nextState).")
+                FxALog.debug("Processing event \(evt) for state \(self.state). Next state is \(nextState).")
                 self.state = nextState
-                toProcess = self.stateActions(forState: self.state, via: e)
+                toProcess = self.stateActions(forState: self.state, via: evt)
                 if let successiveEvent = toProcess {
                     FxALog.debug(
-                        "Ran \(e) side-effects for state \(self.state), got successive event \(successiveEvent)."
+                        "Ran \(evt) side-effects for state \(self.state), got successive event \(successiveEvent)."
                     )
                 }
             }
             completionHandler()
-        }
-    }
-
-    // State transition matrix. Returns nil if there's no transition.
-    internal static func nextState(state: AccountState, event: Event) -> AccountState? {
-        switch state {
-        case .start:
-            switch event {
-            case .initialize: return .start
-            case .accountNotFound: return .notAuthenticated
-            case .accountRestored: return .authenticatedNoProfile
-            default: return nil
-            }
-        case .notAuthenticated:
-            switch event {
-            case .authenticated: return .authenticatedNoProfile
-            default: return nil
-            }
-        case .authenticatedNoProfile:
-            switch event {
-            case .authenticationError: return .authenticationProblem
-            case .fetchProfile: return .authenticatedNoProfile
-            case .fetchedProfile: return .authenticatedWithProfile
-            case .failedToFetchProfile: return .authenticatedNoProfile
-            case .logout: return .notAuthenticated
-            default: return nil
-            }
-        case .authenticatedWithProfile:
-            switch event {
-            case .authenticationError: return .authenticationProblem
-            case .logout: return .notAuthenticated
-            default: return nil
-            }
-        case .authenticationProblem:
-            switch event {
-            case .recoveredFromAuthenticationProblem: return .authenticatedNoProfile
-            case .authenticated: return .authenticatedNoProfile
-            case .logout: return .notAuthenticated
-            default: return nil
-            }
         }
     }
 
@@ -261,9 +326,15 @@ open class FxaAccountManager {
             case .initialize: do {
                 if let acct = tryRestoreAccount() {
                     account = acct
-                    return Event.accountRestored
+                    if !acct.isInMigrationState() {
+                        return .accountRestored
+                    } else {
+                        // We may have attempted a migration previously, which failed
+                        // in a way that allows us to retry it.
+                        return .inFlightMigration
+                    }
                 } else {
-                    return Event.accountNotFound
+                    return .accountNotFound
                 }
             }
             default: return nil
@@ -294,7 +365,44 @@ open class FxaAccountManager {
             case .accountNotFound: do {
                 account = createAccount()
             }
+            case let .authenticateViaMigration(sessionToken, kSync, kXCS): do {
+                let acct = requireAccount()
+                FxALog.info("Registering persistence callback")
+                acct.registerPersistCallback(statePersistenceCallback)
+
+                if acct.migrateFromSessionToken(
+                    sessionToken: sessionToken,
+                    kSync: kSync,
+                    kXCS: kXCS
+                ) {
+                    return .authenticatedViaMigration
+                }
+                if acct.isInMigrationState() {
+                    return .retryMigrationLater
+                }
+            }
             default: break // Do nothing
+            }
+        }
+        case .canAutoretryMigration: do {
+            switch via {
+            case .retryMigration, .inFlightMigration: do {
+                let acct = requireAccount()
+                FxALog.info("Registering persistence callback")
+                acct.registerPersistCallback(statePersistenceCallback)
+
+                // Case 1: Success!
+                if acct.retryMigrateFromSessionToken() {
+                    return .authenticatedViaMigration
+                }
+                // Case 2: Transient error, we can still retry later.
+                if acct.isInMigrationState() {
+                    return .retryMigrationLater
+                }
+                // Case 3: Non-recoverable error, at this point there's nothing we can do.
+                return .migrationFailure
+            }
+            default: break // Do Nothing
             }
         }
         case .authenticatedNoProfile: do {
@@ -336,6 +444,19 @@ open class FxaAccountManager {
 
                 return Event.fetchProfile
             }
+            case .authenticatedViaMigration: do {
+                // Note that we are not registering an account persistence callback here like
+                // we do in other `.authenticatedNoProfile` cases, because it would have been
+                // already registered while handling any of the precursor events, such as
+                // `.authenticateViaMigration`, `.retryMigration` or `.inFlightMigration`
+                FxALog.info("Ensuring device capabilities...")
+                // At the minimum, we need to ensure the device capabilities.
+                requireConstellation().ensureCapabilities(capabilities: deviceConfig.capabilities)
+
+                postAuthenticated(authType: .migrated)
+
+                return Event.fetchProfile
+            }
             case .recoveredFromAuthenticationProblem: do {
                 FxALog.info("Registering persistence callback")
                 requireAccount().registerPersistCallback(statePersistenceCallback)
@@ -350,6 +471,24 @@ open class FxaAccountManager {
                 postAuthenticated(authType: .recovered)
 
                 return Event.fetchProfile
+            }
+            case let .changedPassword(newSessionToken): do {
+                do {
+                    try requireAccount().handleSessionTokenChange(sessionToken: newSessionToken)
+
+                    FxALog.info("Initializing device")
+                    requireConstellation().initDevice(
+                        name: deviceConfig.name,
+                        type: deviceConfig.type,
+                        capabilities: deviceConfig.capabilities
+                    )
+
+                    postAuthenticated(authType: .existingAccount)
+
+                    return Event.fetchProfile
+                } catch {
+                    FxALog.error("Error handling the session token change: \(error)")
+                }
             }
             case .fetchProfile: do {
                 // Profile fetching and account authentication issues:
@@ -453,10 +592,25 @@ open class FxaAccountManager {
         requireConstellation().refreshState()
     }
 
-    // Handle auth exceptions caught in classes that don't hold a reference to the manager.
-    internal func setupAuthExceptionsListener() {
+    internal func setupInternalListeners() {
+        // Handle auth exceptions caught in classes that don't hold a reference to the manager.
         _ = NotificationCenter.default.addObserver(forName: .accountAuthException, object: nil, queue: nil) { _ in
             self.processEvent(event: .authenticationError) {}
+        }
+        // Reflect updates to the local device to our own in-memory model.
+        _ = NotificationCenter.default.addObserver(
+            forName: .constellationStateUpdate, object: nil, queue: nil
+        ) { notification in
+            if let userInfo = notification.userInfo, let newState = userInfo["newState"] as? ConstellationState {
+                if let localDevice = newState.localDevice {
+                    self.deviceConfig = DeviceConfig(
+                        name: localDevice.displayName,
+                        // The other properties are likely to not get modified.
+                        type: self.deviceConfig.type,
+                        capabilities: self.deviceConfig.capabilities
+                    )
+                }
+            }
         }
     }
 
@@ -484,9 +638,9 @@ extension Notification.Name {
 }
 
 class FxAStatePersistenceCallback: PersistCallback {
-    weak var manager: FxaAccountManager?
+    weak var manager: FxAccountManager?
 
-    public init(manager: FxaAccountManager) {
+    public init(manager: FxAccountManager) {
         self.manager = manager
     }
 
@@ -495,40 +649,13 @@ class FxAStatePersistenceCallback: PersistCallback {
     }
 }
 
-/**
- * States of the [FxaAccountManager].
- */
-internal enum AccountState {
-    case start
-    case notAuthenticated
-    case authenticationProblem
-    case authenticatedNoProfile
-    case authenticatedWithProfile
-}
-
-/**
- * Base class for [FxaAccountManager] state machine events.
- * Events aren't a simple enum class because we might want to pass data along with some of the events.
- */
-internal enum Event {
-    case initialize
-    case accountNotFound
-    case accountRestored
-    case authenticated(authData: FxaAuthData)
-    case authenticationError /* (error: AuthException) */
-    case recoveredFromAuthenticationProblem
-    case fetchProfile
-    case fetchedProfile
-    case failedToFetchProfile
-    case logout
-}
-
 public enum FxaAuthType {
     case existingAccount
     case signin
     case signup
     case pairing
     case recovered
+    case migrated
     case other(reason: String)
 
     internal static func fromActionQueryParam(_ action: String) -> FxaAuthType {

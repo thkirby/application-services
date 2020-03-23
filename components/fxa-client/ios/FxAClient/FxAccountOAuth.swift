@@ -4,11 +4,13 @@
 
 import Foundation
 
-public enum OAuthScope {
+public class OAuthScope {
     // Necessary to fetch a profile.
     public static let profile: String = "profile"
     // Necessary to obtain sync keys.
     public static let oldSync: String = "https://identity.mozilla.com/apps/oldsync"
+    // Necessary to obtain a sessionToken, which gives full access to the account.
+    public static let session: String = "https://identity.mozilla.com/tokens/session"
 }
 
 public struct ScopedKey {
@@ -54,31 +56,15 @@ public struct AccessTokenInfo {
 
 public struct IntrospectInfo {
     public let active: Bool
-    public let tokenType: String
-    public let scope: String?
-    public let exp: Date
-    public let iss: String?
 
     internal init(msg: MsgTypes_IntrospectInfo) {
         active = msg.active
-        tokenType = msg.tokenType
-        scope = msg.hasScope ? msg.scope : nil
-        exp = Date(timeIntervalSince1970: Double(msg.exp))
-        iss = msg.hasIss ? msg.iss : nil
     }
 
     // For testing.
     internal init(
-        active: Bool,
-        tokenType: String,
-        scope: String? = nil,
-        exp: Date = Date(),
-        iss: String? = nil
+        active: Bool
     ) {
         self.active = active
-        self.tokenType = tokenType
-        self.scope = scope
-        self.exp = exp
-        self.iss = iss
     }
 }

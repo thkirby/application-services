@@ -49,7 +49,7 @@ class MockFxAccount: FxAccount {
 
     override func checkAuthorizationStatus() throws -> IntrospectInfo {
         invocations.append(.checkAuthorizationStatus)
-        return IntrospectInfo(active: true, tokenType: "refresh_token")
+        return IntrospectInfo(active: true)
     }
 
     override func clearAccessTokenCache() throws {
@@ -71,7 +71,7 @@ class MockFxAccount: FxAccount {
     }
 }
 
-class MockFxaAccountManager: FxaAccountManager {
+class MockFxAccountManager: FxAccountManager {
     var invocations: [MethodInvocation] = []
     enum MethodInvocation {}
 
@@ -118,9 +118,9 @@ class MockDeviceConstellation: DeviceConstellation {
     }
 }
 
-func mockFxAManager() -> MockFxaAccountManager {
-    return MockFxaAccountManager(
-        config: .release(clientId: "clientid", redirectUri: "redirect"),
+func mockFxAManager() -> MockFxAccountManager {
+    return MockFxAccountManager(
+        config: FxAConfig(server: .release, clientId: "clientid", redirectUri: "redirect"),
         deviceConfig: DeviceConfig(name: "foo", type: .mobile, capabilities: [])
     )
 }

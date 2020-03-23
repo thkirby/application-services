@@ -2,10 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::{error::*, scoped_keys::ScopedKey, scopes, FirefoxAccount, MigrationData};
+use crate::{error::*, scoped_keys::ScopedKey, scopes, FirefoxAccount};
 use ffi_support::IntoFfi;
 use serde_derive::*;
 use std::time::Instant;
+
+// Values to pass back to calling code over the FFI.
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
 pub struct FxAMigrationResult {
@@ -33,6 +35,16 @@ unsafe impl IntoFfi for MigrationState {
             MigrationState::ReuseSessionToken => 2,
         }
     }
+}
+
+// Migration-related data that we may need to serialize in the persisted account state.
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MigrationData {
+    k_xcs: String,
+    k_sync: String,
+    copy_session_token: bool,
+    session_token: String,
 }
 
 impl FirefoxAccount {
@@ -169,7 +181,7 @@ impl FirefoxAccount {
         };
 
         // Trade our session token for a refresh token.
-        let oauth_response = self.client.oauth_tokens_from_session_token(
+        let oauth_response = self.client.refresh_token_with_session_token(
             &self.state.config,
             &migration_session_token,
             &[scopes::PROFILE, scopes::OLD_SYNC],
@@ -190,14 +202,15 @@ impl FirefoxAccount {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http_client::*;
+    use crate::{http_client::*, Config};
     use std::collections::HashMap;
     use std::sync::Arc;
 
     fn setup() -> FirefoxAccount {
         // I'd love to be able to configure a single mocked client here,
         // but can't work out how to do that within the typesystem.
-        FirefoxAccount::new("https://stable.dev.lcip.org", "12345678", "https://foo.bar")
+        let config = Config::stable_dev("12345678", "https://foo.bar");
+        FirefoxAccount::with_config(config)
     }
 
     macro_rules! assert_match {
@@ -266,7 +279,7 @@ mod tests {
             )
             .returns_once(Ok(key_data));
         client
-            .expect_oauth_tokens_from_session_token(
+            .expect_refresh_token_with_session_token(
                 mockiato::Argument::any,
                 |arg| arg.partial_eq("dup_session"),
                 |arg| arg.unordered_vec_eq([scopes::PROFILE, scopes::OLD_SYNC].to_vec()),
